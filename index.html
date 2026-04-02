@@ -53,6 +53,10 @@
     button {
       cursor: pointer;
     }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
     .buttons {
       display: flex;
       gap: 10px;
@@ -202,6 +206,7 @@
     let reader = null;
     let writer = null;
     let rxBuffer = new Uint8Array(0);
+    let busy = false;
 
     const MAGIC = [0x50, 0xBB, 0xFF, 0x20, 0x12, 0x07, 0x25, 0x00];
     const ACK = 0x06;
@@ -249,6 +254,41 @@
       el.className = ok ? "status ok" : "status bad";
     }
 
+    function setBusy(isBusy) {
+      busy = isBusy;
+      document.getElementById("connectBtn").disabled = isBusy;
+      document.getElementById("readBtn").disabled = isBusy;
+      document.getElementById("writeBtn").disabled = isBusy;
+      document.getElementById("clearLogBtn").disabled = isBusy;
+      document.getElementById("mem").disabled = isBusy;
+      document.getElementById("freq").disabled = isBusy;
+      document.getElementById("duplex").disabled = isBusy;
+      document.getElementById("offset").disabled = isBusy;
+      document.getElementById("toneMode").disabled = isBusy;
+      document.getElementById("ctcssTone").disabled = isBusy;
+      document.getElementById("dtcsCode").disabled = isBusy;
+      document.getElementById("dtcsPolarity").disabled = isBusy;
+      document.getElementById("crossRxType").disabled = isBusy;
+      document.getElementById("crossRxValue").disabled = isBusy;
+      document.getElementById("crossTxType").disabled = isBusy;
+      document.getElementById("crossTxValue").disabled = isBusy;
+      document.getElementById("name").disabled = isBusy;
+      document.getElementById("disconnectBtn").disabled = false;
+    }
+
+    async function withBusy(taskName, fn) {
+      if (busy) {
+        log(`ERROR: Another radio operation is already in progress.`);
+        return;
+      }
+      setBusy(true);
+      try {
+        await fn();
+      } finally {
+        setBusy(false);
+      }
+    }
+
     function sleep(ms) {
       return new Promise(resolve => setTimeout(resolve, ms));
     }
@@ -271,18 +311,10 @@
     }
 
     function formatTone(toneObj) {
-      if (!toneObj || !toneObj.mode) {
-        return "NONE";
-      }
-      if (toneObj.mode === "Tone") {
-        return Number(toneObj.value).toFixed(1);
-      }
-      if (toneObj.mode === "DTCS") {
-        return `D${toneObj.value}${toneObj.polarity}`;
-      }
-      if (toneObj.mode === "Unknown") {
-        return `Unknown(${toneObj.value})`;
-      }
+      if (!toneObj || !toneObj.mode) return "NONE";
+      if (toneObj.mode === "Tone") return Number(toneObj.value).toFixed(1);
+      if (toneObj.mode === "DTCS") return `D${toneObj.value}${toneObj.polarity}`;
+      if (toneObj.mode === "Unknown") return `Unknown(${toneObj.value})`;
       return "NONE";
     }
 
@@ -337,21 +369,14 @@
       }
 
       if (token.startsWith("D")) {
-        if (token.length < 5) {
-          throw new Error(`Invalid DCS token: ${token}`);
-        }
+        if (token.length < 5) throw new Error(`Invalid DCS token: ${token}`);
 
         const codeStr = token.slice(1, -1);
         const pol = token.slice(-1);
         const code = Number(codeStr);
 
-        if (Number.isNaN(code)) {
-          throw new Error(`Invalid DCS code: ${token}`);
-        }
-
-        if (!DTCS_CODES.includes(code)) {
-          throw new Error(`DCS code ${code} not in UV-5R DTCS table`);
-        }
+        if (Number.isNaN(code)) throw new Error(`Invalid DCS code: ${token}`);
+        if (!DTCS_CODES.includes(code)) throw new Error(`DCS code ${code} not in UV-5R DTCS table`);
 
         const index = DTCS_CODES.indexOf(code) + 1;
         if (pol === "N") return index;
@@ -360,9 +385,7 @@
       }
 
       const hz = Number(token);
-      if (Number.isNaN(hz)) {
-        throw new Error(`Invalid tone token: ${token}`);
-      }
+      if (Number.isNaN(hz)) throw new Error(`Invalid tone token: ${token}`);
 
       const rounded = Number(hz.toFixed(1));
       if (!CTCSS_TONES.includes(rounded)) {
@@ -370,9 +393,7 @@
       }
 
       const value = Math.round(rounded * 10.0);
-      if (value < 0x0258) {
-        throw new Error(`CTCSS tone too small/invalid for UV-5R encoding: ${token}`);
-      }
+      if (value < 0x0258) throw new Error(`CTCSS tone too small/invalid for UV-5R encoding: ${token}`);
       return value;
     }
 
@@ -436,18 +457,11 @@
     }
 
     function decodeTone(word) {
-      if (word === 0 || word === 0xFFFF) {
-        return { mode: "", value: null, polarity: "N" };
-      }
-
-      if (word >= 0x0258) {
-        return { mode: "Tone", value: word / 10.0, polarity: "N" };
-      }
+      if (word === 0 || word === 0xFFFF) return { mode: "", value: null, polarity: "N" };
+      if (word >= 0x0258) return { mode: "Tone", value: word / 10.0, polarity: "N" };
 
       const ndcs = DTCS_CODES.length;
-      if (word >= 1 && word <= ndcs) {
-        return { mode: "DTCS", value: DTCS_CODES[word - 1], polarity: "N" };
-      }
+      if (word >= 1 && word <= ndcs) return { mode: "DTCS", value: DTCS_CODES[word - 1], polarity: "N" };
       if (word >= (ndcs + 2) && word <= (2 * ndcs + 1)) {
         return { mode: "DTCS", value: DTCS_CODES[word - ndcs - 2], polarity: "R" };
       }
@@ -487,16 +501,7 @@
         toneMode = "Cross";
       }
 
-      return {
-        rxMHz,
-        txMHz,
-        duplex,
-        offset,
-        toneMode,
-        rxTone,
-        txTone,
-        rawHex: hx(raw)
-      };
+      return { rxMHz, txMHz, duplex, offset, toneMode, rxTone, txTone, rawHex: hx(raw) };
     }
 
     async function identRadio() {
@@ -510,9 +515,7 @@
 
       const ack1 = await readExact(1);
       log(`ack1: ${hx(ack1)}`);
-      if (ack1[0] !== ACK) {
-        throw new Error(`No ACK after magic: ${hx(ack1)}`);
-      }
+      if (ack1[0] !== ACK) throw new Error(`No ACK after magic: ${hx(ack1)}`);
 
       await writeBytes([ENQ]);
       await sleep(150);
@@ -536,9 +539,7 @@
 
       const ack2 = await readExact(1);
       log(`ack2: ${hx(ack2)}`);
-      if (ack2[0] !== ACK) {
-        throw new Error(`Radio refused clone after ident: ${hx(ack2)}`);
-      }
+      if (ack2[0] !== ACK) throw new Error(`Radio refused clone after ident: ${hx(ack2)}`);
 
       return identArr;
     }
@@ -587,9 +588,7 @@
     }
 
     async function writeBlock16(start, data16) {
-      if (data16.length !== 16) {
-        throw new Error("Write block must be 16 bytes");
-      }
+      if (data16.length !== 16) throw new Error("Write block must be 16 bytes");
 
       await writeBytes(makeWriteHeader(start, 0x10));
       await writeBytes(data16);
@@ -627,6 +626,11 @@
     }
 
     async function connectSerial() {
+      if (busy) {
+        log("ERROR: Another radio operation is already in progress.");
+        return;
+      }
+
       if (!("serial" in navigator)) {
         throw new Error("Web Serial API not available in this browser");
       }
@@ -650,47 +654,40 @@
 
     async function disconnectSerial() {
       try {
-        if (reader) {
-          await reader.cancel();
-        }
-      } catch (e) {
-      }
+        if (reader) await reader.cancel();
+      } catch (e) {}
 
       try {
         if (reader) {
           reader.releaseLock();
           reader = null;
         }
-      } catch (e) {
-      }
+      } catch (e) {}
 
       try {
         if (writer) {
           writer.releaseLock();
           writer = null;
         }
-      } catch (e) {
-      }
+      } catch (e) {}
 
       try {
         if (port) {
           await port.close();
           port = null;
         }
-      } catch (e) {
-      }
+      } catch (e) {}
 
       clearRxBuffer();
       log("Disconnected.");
       setStatus("Not connected", false);
+      setBusy(false);
     }
 
     function getToneWordsFromUI() {
       const toneMode = document.getElementById("toneMode").value;
 
-      if (toneMode === "NONE") {
-        return { rxToneWord: 0, txToneWord: 0 };
-      }
+      if (toneMode === "NONE") return { rxToneWord: 0, txToneWord: 0 };
 
       if (toneMode === "Tone") {
         const ctcssTone = document.getElementById("ctcssTone").value;
@@ -884,23 +881,27 @@
     });
 
     document.getElementById("readBtn").addEventListener("click", async () => {
-      try {
-        await readExisting();
-      } catch (e) {
-        log(`ERROR: ${e.message}`);
-      }
+      await withBusy("read", async () => {
+        try {
+          await readExisting();
+        } catch (e) {
+          log(`ERROR: ${e.message}`);
+        }
+      });
     });
 
     document.getElementById("writeBtn").addEventListener("click", async () => {
-      try {
-        await writeChannel();
-      } catch (e) {
-        log(`ERROR: ${e.message}`);
-      }
+      await withBusy("write", async () => {
+        try {
+          await writeChannel();
+        } catch (e) {
+          log(`ERROR: ${e.message}`);
+        }
+      });
     });
 
     document.getElementById("clearLogBtn").addEventListener("click", () => {
-      clearLog();
+      if (!busy) clearLog();
     });
 
     document.getElementById("toneMode").addEventListener("change", updateToneUI);
