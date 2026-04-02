@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UV-5R Quick Programmer</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 24px;
+      background: #f5f5f5;
+      color: #222;
+    }
+    .wrap {
+      max-width: 980px;
+      margin: 0 auto;
+      background: #fff;
+      border: 1px solid #d8d8d8;
+      padding: 22px;
+    }
+    h1 { margin-top: 0; }
+    .muted { color: #666; }
+    .grid {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 10px 16px;
+      align-items: center;
+      margin-top: 16px;
+    }
+    input, select, button, textarea {
+      font: inherit;
+      padding: 8px;
+      box-sizing: border-box;
+    }
+    button { cursor: pointer; }
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    textarea {
+      width: 100%;
+      height: 280px;
+      margin-top: 18px;
+      font-family: monospace;
+      white-space: pre-wrap;
+    }
+    .section-title {
+      font-weight: bold;
+      margin-top: 18px;
+      padding-top: 10px;
+      border-top: 1px solid #e0e0e0;
+    }
+    .status {
+      margin-top: 10px;
+      font-size: 0.95rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>UV-5R Quick Programmer</h1>
+    <div class="muted">Browser app for Chromium browsers using Web Serial.</div>
+    <div class="status" id="status">Status: disconnected</div>
+
+    <div class="section-title">Channel</div>
+    <div class="grid">
+      <label for="mem">Memory location</label>
+      <input id="mem" type="number" min="0" max="127" value="0" />
+
+      <label for="name">Channel name</label>
+      <input id="name" type="text" maxlength="7" value="REPTST" />
+
+      <label for="freq">Receive frequency (MHz)</label>
+      <input id="freq" type="number" step="0.00001" value="146.94000" />
+
+      <label for="duplex">Duplex</label>
+      <select id="duplex">
+        <option value="none">none</option>
+        <option value="+">+</option>
+        <option value="-">-</option>
+      </select>
+
+      <label for="offset">Offset (MHz)</label>
+      <input id="offset" type="number" step="0.00001" value="0.60000" />
+    </div>
+
+    <div class="section-title">Tone</div>
+    <div class="grid">
+      <label for="toneMode">Tone mode</label>
+      <select id="toneMode">
+        <option value="NONE">NONE</option>
+        <option value="Tone">Tone</option>
+        <option value="TSQL">TSQL</option>
+        <option value="DTCS">DTCS</option>
+        <option value="Cross">Cross</option>
+      </select>
+
+      <label for="ctcssTone">CTCSS tone</label>
+      <select id="ctcssTone"></select>
+
+      <label for="dtcsCode">DTCS code</label>
+      <select id="dtcsCode"></select>
+
+      <label for="dtcsPolarity">DTCS polarity</label>
+      <select id="dtcsPolarity">
+        <option value="N">Normal</option>
+        <option value="R">Reverse</option>
+      </select>
+
+      <label for="crossRxType">Cross RX type</label>
+      <select id="crossRxType">
+        <option value="NONE">NONE</option>
+        <option value="CTCSS">CTCSS</option>
+        <option value="DTCS">DTCS</option>
+      </select>
+
+      <label for="crossRxCtcss">Cross RX CTCSS</label>
+      <select id="crossRxCtcss"></select>
+
+      <label for="crossRxDtcs">Cross RX DTCS</label>
+      <select id="crossRxDtcs"></select>
+
+      <label for="crossRxPolarity">Cross RX polarity</label>
+      <select id="crossRxPolarity">
+        <option value="N">Normal</option>
+        <option value="R">Reverse</option>
+      </select>
+
+      <label for="crossTxType">Cross TX type</label>
+      <select id="crossTxType">
+        <option value="NONE">NONE</option>
+        <option value="CTCSS">CTCSS</option>
+        <option value="DTCS">DTCS</option>
+      </select>
+
+      <label for="crossTxCtcss">Cross TX CTCSS</label>
+      <select id="crossTxCtcss"></select>
+
+      <label for="crossTxDtcs">Cross TX DTCS</label>
+      <select id="crossTxDtcs"></select>
+
+      <label for="crossTxPolarity">Cross TX polarity</label>
+      <select id="crossTxPolarity">
+        <option value="N">Normal</option>
+        <option value="R">Reverse</option>
+      </select>
+
+      <label for="verify">Verify after write</label>
+      <input id="verify" type="checkbox" checked />
+    </div>
+
+    <div class="buttons">
+      <button id="connectBtn">Connect</button>
+      <button id="readBtn">Read Existing</button>
+      <button id="writeBtn">Write Channel</button>
+      <button id="disconnectBtn">Disconnect</button>
+    </div>
+
+    <textarea id="log" readonly></textarea>
+  </div>
+
+  <script>
+    let port = null;
+    let reader = null;
+    let writer = null;
+
+    const MAGIC = [0x50, 0xBB, 0xFF, 0x20, 0x12, 0x07, 0x25, 0x00];
+    const ACK = 0x06;
+    const ENQ = 0x02;
+    const MEM_RECORD_SIZE = 16;
+    const NAME_TABLE_OFFSET = 0x1000;
+    const NAME_RECORD_SIZE = 16;
+    const NAME_LENGTH = 7;
+
+    const CTCSS_TONES = [
+      67.0, 69.3, 71.9, 74.4, 77.0, 79.7, 82.5, 85.4, 88.5, 91.5,
+      94.8, 97.4, 100.0, 103.5, 107.2, 110.9, 114.8, 118.8, 123.0,
+      127.3, 131.8, 136.5, 141.3, 146.2, 151.4, 156.7, 159.8, 162.2,
+      165.5, 167.9, 171.3, 173.8, 177.3, 179.9, 183.5, 186.2, 189.9,
+      192.8, 196.6, 199.5, 203.5, 206.5, 210.7, 218.1, 225.7, 229.1,
+      233.6, 241.8, 250.3, 254.1
+    ];
+
+    const DTCS_CODES = [
+      23, 25, 26, 31, 32, 36, 43, 47, 51, 53, 54, 65, 71, 72, 73, 74,
+      114, 115, 116, 122, 125, 131, 132, 134, 143, 145, 152, 155, 156,
+      162, 165, 172, 174, 205, 212, 223, 225, 226, 243, 244, 245, 246,
+      251, 252, 255, 261, 263, 265, 266, 271, 274, 306, 311, 315, 325,
+      331, 332, 343, 346, 351, 356, 364, 365, 371, 411, 412, 413, 423,
+      431, 432, 445, 446, 452, 454, 455, 462, 464, 465, 466, 503, 506,
+      516, 523, 526, 532, 546, 565, 606, 612, 624, 627, 631, 632, 654,
+      662, 664, 703, 712, 723, 731, 732, 734, 743, 754
+    ];
+
+    function log(msg) {
+      const box = document.getElementById("log");
+      box.value += msg + "\n";
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function setStatus(msg) {
+      document.getElementById("status").textContent = `Status: ${msg}`;
+    }
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function hx(bytes) {
+      return Array.from(bytes).map(b => b.toString(16).padStart(2, "0").toUpperCase()).join(" ");
+    }
+
+    function sanitizeName(name) {
+      const n = name.trim().toUpperCase();
+      if (n.length > NAME_LENGTH) throw new Error("Channel name must be at most 7 characters");
+      if (!/^[\x00-\x7F]*$/.test(n)) throw new Error("Channel name must be ASCII");
+      return n;
+    }
+
+    function intToBcdLe4(value) {
+      const s = String(value).padStart(8, "0");
+      const out = [];
+      for (let i = 0; i < 8; i += 2) {
+        const hi = Number(s[i]);
+        const lo = Number(s[i + 1]);
+        out.push((hi << 4) | lo);
+      }
+      return Uint8Array.from(out.reverse());
+    }
+
+    function bcdBytesToIntLe(data) {
+      let digits = "";
+      for (let i = data.length - 1; i >= 0; i--) {
+        const b = data[i];
+        const hi = (b >> 4) & 0x0F;
+        const lo = b & 0x0F;
+        if (hi > 9 || lo > 9) throw new Error(`Invalid BCD byte: ${b}`);
+        digits += `${hi}${lo}`;
+      }
+      return Number(digits);
+    }
+
+    function freqBytesToMHz(data) {
+      return bcdBytesToIntLe(data) / 100000.0;
+    }
+
+    function mhzToFreqBytes(mhz) {
+      if (mhz <= 0) throw new Error("Frequency must be > 0");
+      return intToBcdLe4(Math.round(mhz * 100000.0));
+    }
+
+    function encodeToneToken(token) {
+      token = token.trim().toUpperCase();
+      if (["", "0", "OFF", "NONE", "-"].includes(token)) return 0;
+
+      if (token.startsWith("D")) {
+        if (token.length < 5) throw new Error(`Invalid DCS token: ${token}`);
+        const codeStr = token.slice(1, -1);
+        const pol = token.slice(-1);
+        const code = Number(codeStr);
+        if (!DTCS_CODES.includes(code)) throw new Error(`DCS code ${code} not in UV-5R table`);
+        const index = DTCS_CODES.indexOf(code) + 1;
+        if (pol === "N") return index;
+        if (pol === "R" || pol === "I") return index + DTCS_CODES.length + 1;
+        throw new Error(`Invalid DCS polarity in ${token}`);
+      }
+
+      const hz = Number(token);
+      if (Number.isNaN(hz)) throw new Error(`Invalid tone token: ${token}`);
+      const rounded = Math.round(hz * 10) / 10;
+      if (!CTCSS_TONES.includes(rounded)) throw new Error(`CTCSS tone ${rounded.toFixed(1)} is not standard`);
+      const value = Math.round(rounded * 10.0);
+      if (value < 0x0258) throw new Error(`CTCSS tone too small/invalid: ${token}`);
+      return value;
+    }
+
+    function decodeTone(word) {
+      if (word === 0 || word === 0xFFFF) return { mode: "", value: null, polarity: "N" };
+      if (word >= 0x0258) return { mode: "Tone", value: word / 10.0, polarity: "N" };
+      const ndcs = DTCS_CODES.length;
+      if (word >= 1 && word <= ndcs) return { mode: "DTCS", value: DTCS_CODES[word - 1], polarity: "N" };
+      if (word >= ndcs + 2 && word <= 2 * ndcs + 1) return { mode: "DTCS", value: DTCS_CODES[word - ndcs - 2], polarity: "R" };
+      return { mode: "Unknown", value: word, polarity: "?" };
+    }
+
+    function decodeDuplexOffset(rxMHz, txMHz) {
+      if (Math.abs(rxMHz - txMHz) < 0.00001) return ["", 0.0];
+      if (txMHz > rxMHz) return ["+", Math.round((txMHz - rxMHz) * 100000) / 100000];
+      return ["-", Math.round((rxMHz - txMHz) * 100000) / 100000];
+    }
+
+    function parseMemRecord(raw) {
+      const rxMHz = freqBytesToMHz(raw.slice(0, 4));
+      const txMHz = freqBytesToMHz(raw.slice(4, 8));
+      const rxToneWord = raw[8] | (raw[9] << 8);
+      const txToneWord = raw[10] | (raw[11] << 8);
+      const rxTone = decodeTone(rxToneWord);
+      const txTone = decodeTone(txToneWord);
+      const [duplex, offset] = decodeDuplexOffset(rxMHz, txMHz);
+
+      let toneMode = "";
+      if (txTone.mode === "Tone" && !rxTone.mode) toneMode = "Tone";
+      else if (txTone.mode === "Tone" && rxTone.mode === "Tone" && txTone.value === rxTone.value) toneMode = "TSQL";
+      else if (txTone.mode === "DTCS" && rxTone.mode === "DTCS" && txTone.value === rxTone.value && txTone.polarity === rxTone.polarity) toneMode = "DTCS";
+      else if (txTone.mode || rxTone.mode) toneMode = "Cross";
+
+      return { rxMHz, txMHz, duplex, offset, rxTone, txTone, toneMode };
+    }
+
+    function computeTxMHz(rxMHz, duplex, offsetMHz) {
+      const d = duplex.trim().toLowerCase();
+      if (["", "none", "off", "simplex", "s", "0"].includes(d)) return rxMHz;
+      if (d === "+") return rxMHz + offsetMHz;
+      if (d === "-") return rxMHz - offsetMHz;
+      throw new Error("Duplex must be +, -, or none");
+    }
+
+    function buildNameRecord(existingRaw, name) {
+      const out = new Uint8Array(existingRaw);
+      const n = sanitizeName(name);
+      for (let i = 0; i < NAME_LENGTH; i++) {
+        out[i] = i < n.length ? n.charCodeAt(i) : 0xFF;
+      }
+      return out;
+    }
+
+    function encodeFlags(existingRaw) {
+      const out = new Uint8Array(existingRaw);
+      out[14] &= 0xFE;
+      out[15] &= ~0x4F;
+      out[15] |= 0x04;
+      out[15] |= 0x40;
+      return out;
+    }
+
+    function buildRecordFromInputs(existingRaw, rxMHz, duplex, offsetMHz, rxToneWord, txToneWord) {
+      const txMHz = computeTxMHz(rxMHz, duplex, offsetMHz);
+      const out = new Uint8Array(existingRaw);
+      out.set(mhzToFreqBytes(rxMHz), 0);
+      out.set(mhzToFreqBytes(txMHz), 4);
+      out[8] = rxToneWord & 0xFF;
+      out[9] = (rxToneWord >> 8) & 0xFF;
+      out[10] = txToneWord & 0xFF;
+      out[11] = (txToneWord >> 8) & 0xFF;
+      return encodeFlags(out);
+    }
+
+    function populateDropdown(selectId, values, formatter = v => String(v), defaultValue = null) {
+      const el = document.getElementById(selectId);
+      el.innerHTML = "";
+      values.forEach(v => {
+        const opt = document.createElement("option");
+        opt.value = formatter(v);
+        opt.textContent = formatter(v);
+        el.appendChild(opt);
+      });
+      if (defaultValue !== null) el.value = formatter(defaultValue);
+    }
+
+    function setRowVisible(id, visible) {
+      const field = document.getElementById(id);
+      const label = document.querySelector(`label[for="${id}"]`);
+      const display = visible ? "" : "none";
+      if (field) field.style.display = display;
+      if (label) label.style.display = display;
+    }
+
+    function updateToneUI() {
+      const mode = document.getElementById("toneMode").value;
+      const showCtcss = mode === "Tone" || mode === "TSQL";
+      const showDtcs = mode === "DTCS";
+      const showCross = mode === "Cross";
+
+      setRowVisible("ctcssTone", showCtcss);
+      setRowVisible("dtcsCode", showDtcs);
+      setRowVisible("dtcsPolarity", showDtcs);
+
+      [
+        "crossRxType", "crossRxCtcss", "crossRxDtcs", "crossRxPolarity",
+        "crossTxType", "crossTxCtcss", "crossTxDtcs", "crossTxPolarity"
+      ].forEach(id => setRowVisible(id, showCross));
+
+      updateCrossToneUI();
+    }
+
+    function updateCrossToneUI() {
+      const showCross = document.getElementById("toneMode").value === "Cross";
+      const rxType = document.getElementById("crossRxType").value;
+      const txType = document.getElementById("crossTxType").value;
+
+      setRowVisible("crossRxCtcss", showCross && rxType === "CTCSS");
+      setRowVisible("crossRxDtcs", showCross && rxType === "DTCS");
+      setRowVisible("crossRxPolarity", showCross && rxType === "DTCS");
+      setRowVisible("crossTxCtcss", showCross && txType === "CTCSS");
+      setRowVisible("crossTxDtcs", showCross && txType === "DTCS");
+      setRowVisible("crossTxPolarity", showCross && txType === "DTCS");
+    }
+
+    async function connectSerial() {
+      if (!("serial" in navigator)) throw new Error("Web Serial API not available in this browser");
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 9600, dataBits: 8, stopBits: 1, parity: "none", flowControl: "none" });
+      writer = port.writable.getWriter();
+      reader = port.readable.getReader();
+      setStatus("connected");
+      log("Connected.");
+    }
+
+    async function disconnectSerial() {
+      try {
+        if (reader) {
+          await reader.cancel();
+          reader.releaseLock();
+          reader = null;
+        }
+      } catch (e) {}
+
+      try {
+        if (writer) {
+          writer.releaseLock();
+          writer = null;
+        }
+      } catch (e) {}
+
+      if (port) {
+        await port.close();
+        port = null;
+      }
+      setStatus("disconnected");
+      log("Disconnected.");
+    }
+
+    async function writeBytes(arr) {
+      await writer.write(new Uint8Array(arr));
+    }
+
+    async function readExact(n, timeoutMs = 1500) {
+      const chunks = [];
+      let total = 0;
+      const start = Date.now();
+
+      while (total < n) {
+        if (Date.now() - start > timeoutMs) throw new Error(`Timeout reading ${n} bytes`);
+        const { value, done } = await reader.read();
+        if (done) throw new Error("Reader closed");
+        if (!value || !value.length) continue;
+        chunks.push(value);
+        total += value.length;
+      }
+
+      const out = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) {
+        out.set(chunk, offset);
+        offset += chunk.length;
+      }
+      if (out.length !== n) throw new Error(`Read ${out.length} bytes when exactly ${n} expected`);
+      return out;
+    }
+
+    async function identRadio() {
+      log("Starting handshake...");
+      for (const b of MAGIC) {
+        await writeBytes([b]);
+        await sleep(10);
+      }
+
+      const ack1 = await readExact(1);
+      log(`ack1: ${hx(ack1)}`);
+      if (ack1[0] !== ACK) throw new Error("No ACK after magic");
+
+      await writeBytes([ENQ]);
+      await sleep(150);
+
+      let ident = new Uint8Array();
+      for (let i = 0; i < 12; i++) {
+        const part = await readExact(1);
+        const combined = new Uint8Array(ident.length + 1);
+        combined.set(ident, 0);
+        combined.set(part, ident.length);
+        ident = combined;
+        if (part[0] === 0xDD) break;
+      }
+
+      log(`ident: ${hx(ident)}`);
+      if (ident.length < 8 || ident[ident.length - 1] !== 0xDD) throw new Error(`Bad ident reply: ${hx(ident)}`);
+
+      await writeBytes([ACK]);
+      await sleep(50);
+
+      const ack2 = await readExact(1);
+      log(`ack2: ${hx(ack2)}`);
+      if (ack2[0] !== ACK) throw new Error("Radio refused clone after ident");
+      return ident;
+    }
+
+    function makeReadCommand(start, size = 0x40) {
+      return Uint8Array.from(["S".charCodeAt(0), (start >> 8) & 0xFF, start & 0xFF, size & 0xFF]);
+    }
+
+    function makeWriteHeader(start, size = 0x10) {
+      return Uint8Array.from(["X".charCodeAt(0), (start >> 8) & 0xFF, start & 0xFF, size & 0xFF]);
+    }
+
+    async function readBlock(start, size = 0x40, firstCommand = false) {
+      await writeBytes(makeReadCommand(start, size));
+      if (!firstCommand) {
+        const ack = await readExact(1);
+        if (ack[0] !== ACK) throw new Error(`Missing pre-header ACK for block 0x${start.toString(16)}`);
+      }
+      const header = await readExact(4);
+      const cmd = header[0];
+      const addr = (header[1] << 8) | header[2];
+      const len = header[3];
+      if (cmd !== "X".charCodeAt(0) || addr !== start || len !== size) throw new Error(`Unexpected block header: ${hx(header)}`);
+      const data = await readExact(size);
+      await writeBytes([ACK]);
+      await sleep(30);
+      return data;
+    }
+
+    async function writeBlock16(start, data16) {
+      if (data16.length !== 16) throw new Error("Write block must be 16 bytes");
+      await writeBytes(makeWriteHeader(start, 0x10));
+      await writeBytes(data16);
+      const ack = await readExact(1);
+      if (ack[0] !== ACK) throw new Error(`Bad ACK after write to 0x${start.toString(16)}`);
+    }
+
+    async function readRecord(recno, firstCommand = true) {
+      const addr = recno * MEM_RECORD_SIZE;
+      const blockStart = addr - (addr % 0x40);
+      const block = await readBlock(blockStart, 0x40, firstCommand);
+      const offset = addr - blockStart;
+      return block.slice(offset, offset + 16);
+    }
+
+    async function readNameRecord(recno, firstCommand = false) {
+      const addr = NAME_TABLE_OFFSET + recno * NAME_RECORD_SIZE;
+      const blockStart = addr - (addr % 0x40);
+      const block = await readBlock(blockStart, 0x40, firstCommand);
+      const offset = addr - blockStart;
+      return block.slice(offset, offset + 16);
+    }
+
+    function getToneWords() {
+      const toneMode = document.getElementById("toneMode").value;
+      let rxToneWord = 0;
+      let txToneWord = 0;
+
+      if (toneMode === "NONE") {
+        return { rxToneWord, txToneWord };
+      }
+
+      if (toneMode === "Tone") {
+        txToneWord = encodeToneToken(document.getElementById("ctcssTone").value);
+        return { rxToneWord, txToneWord };
+      }
+
+      if (toneMode === "TSQL") {
+        rxToneWord = encodeToneToken(document.getElementById("ctcssTone").value);
+        txToneWord = rxToneWord;
+        return { rxToneWord, txToneWord };
+      }
+
+      if (toneMode === "DTCS") {
+        const token = `D${document.getElementById("dtcsCode").value}${document.getElementById("dtcsPolarity").value}`;
+        rxToneWord = encodeToneToken(token);
+        txToneWord = rxToneWord;
+        return { rxToneWord, txToneWord };
+      }
+
+      if (toneMode === "Cross") {
+        const rxType = document.getElementById("crossRxType").value;
+        const txType = document.getElementById("crossTxType").value;
+
+        if (rxType === "CTCSS") rxToneWord = encodeToneToken(document.getElementById("crossRxCtcss").value);
+        else if (rxType === "DTCS") rxToneWord = encodeToneToken(`D${document.getElementById("crossRxDtcs").value}${document.getElementById("crossRxPolarity").value}`);
+
+        if (txType === "CTCSS") txToneWord = encodeToneToken(document.getElementById("crossTxCtcss").value);
+        else if (txType === "DTCS") txToneWord = encodeToneToken(`D${document.getElementById("crossTxDtcs").value}${document.getElementById("crossTxPolarity").value}`);
+
+        return { rxToneWord, txToneWord };
+      }
+
+      throw new Error(`Unsupported tone mode: ${toneMode}`);
+    }
+
+    function applyReadResultToForm(decoded) {
+      document.getElementById("freq").value = decoded.rxMHz.toFixed(5);
+      document.getElementById("duplex").value = decoded.duplex || "none";
+      document.getElementById("offset").value = decoded.offset.toFixed(5);
+
+      const mode = decoded.toneMode || "NONE";
+      document.getElementById("toneMode").value = mode;
+
+      if (mode === "Tone" || mode === "TSQL") {
+        const tone = decoded.txTone.value ?? decoded.rxTone.value;
+        if (tone !== null) document.getElementById("ctcssTone").value = Number(tone).toFixed(1);
+      }
+      if (mode === "DTCS") {
+        document.getElementById("dtcsCode").value = String(decoded.txTone.value);
+        document.getElementById("dtcsPolarity").value = decoded.txTone.polarity;
+      }
+      if (mode === "Cross") {
+        if (decoded.rxTone.mode === "Tone") {
+          document.getElementById("crossRxType").value = "CTCSS";
+          document.getElementById("crossRxCtcss").value = Number(decoded.rxTone.value).toFixed(1);
+        } else if (decoded.rxTone.mode === "DTCS") {
+          document.getElementById("crossRxType").value = "DTCS";
+          document.getElementById("crossRxDtcs").value = String(decoded.rxTone.value);
+          document.getElementById("crossRxPolarity").value = decoded.rxTone.polarity;
+        } else {
+          document.getElementById("crossRxType").value = "NONE";
+        }
+
+        if (decoded.txTone.mode === "Tone") {
+          document.getElementById("crossTxType").value = "CTCSS";
+          document.getElementById("crossTxCtcss").value = Number(decoded.txTone.value).toFixed(1);
+        } else if (decoded.txTone.mode === "DTCS") {
+          document.getElementById("crossTxType").value = "DTCS";
+          document.getElementById("crossTxDtcs").value = String(decoded.txTone.value);
+          document.getElementById("crossTxPolarity").value = decoded.txTone.polarity;
+        } else {
+          document.getElementById("crossTxType").value = "NONE";
+        }
+      }
+
+      updateToneUI();
+    }
+
+    async function readExisting() {
+      const mem = Number(document.getElementById("mem").value);
+      await identRadio();
+      const raw = await readRecord(mem, true);
+      const nameRaw = await readNameRecord(mem, false);
+      const decoded = parseMemRecord(raw);
+      applyReadResultToForm(decoded);
+      log(`Memory ${mem} raw: ${hx(raw)}`);
+      log(`Name ${mem} raw:   ${hx(nameRaw)}`);
+      log(`Decoded RX: ${decoded.rxMHz.toFixed(5)} MHz, TX: ${decoded.txMHz.toFixed(5)} MHz, mode: ${decoded.toneMode || 'NONE'}`);
+    }
+
+    async function writeChannel() {
+      const mem = Number(document.getElementById("mem").value);
+      const rxMHz = Number(document.getElementById("freq").value);
+      const duplex = document.getElementById("duplex").value;
+      const offsetMHz = Number(document.getElementById("offset").value);
+      const name = document.getElementById("name").value;
+      const verify = document.getElementById("verify").checked;
+      const { rxToneWord, txToneWord } = getToneWords();
+
+      await identRadio();
+      const oldRaw = await readRecord(mem, true);
+      const oldNameRaw = await readNameRecord(mem, false);
+
+      const newRaw = buildRecordFromInputs(oldRaw, rxMHz, duplex, offsetMHz, rxToneWord, txToneWord);
+      const newNameRaw = buildNameRecord(oldNameRaw, name);
+
+      if (!confirm(`Write memory ${mem}?`)) {
+        log("Write cancelled.");
+        return;
+      }
+
+      const recAddr = mem * MEM_RECORD_SIZE;
+      const nameAddr = NAME_TABLE_OFFSET + mem * NAME_RECORD_SIZE;
+
+      await writeBlock16(recAddr, newRaw);
+      await sleep(150);
+      await writeBlock16(nameAddr, newNameRaw);
+      await sleep(250);
+
+      log(`Wrote memory record at 0x${recAddr.toString(16).padStart(4, "0").toUpperCase()}`);
+      log(`Wrote name record at 0x${nameAddr.toString(16).padStart(4, "0").toUpperCase()}`);
+
+      if (verify) {
+        await sleep(1000);
+        await identRadio();
+        const verifyRaw = await readRecord(mem, true);
+        const verifyNameRaw = await readNameRecord(mem, false);
+        log(`Memory verify: ${hx(verifyRaw) === hx(newRaw) ? "MATCH" : "MISMATCH"}`);
+        log(`Name verify: ${hx(verifyNameRaw) === hx(newNameRaw) ? "MATCH" : "MISMATCH"}`);
+      }
+    }
+
+    function init() {
+      populateDropdown("ctcssTone", CTCSS_TONES, v => Number(v).toFixed(1), 123.0);
+      populateDropdown("dtcsCode", DTCS_CODES, v => String(v), 23);
+      populateDropdown("crossRxCtcss", CTCSS_TONES, v => Number(v).toFixed(1), 123.0);
+      populateDropdown("crossTxCtcss", CTCSS_TONES, v => Number(v).toFixed(1), 123.0);
+      populateDropdown("crossRxDtcs", DTCS_CODES, v => String(v), 23);
+      populateDropdown("crossTxDtcs", DTCS_CODES, v => String(v), 23);
+
+      document.getElementById("toneMode").addEventListener("change", updateToneUI);
+      document.getElementById("crossRxType").addEventListener("change", updateCrossToneUI);
+      document.getElementById("crossTxType").addEventListener("change", updateCrossToneUI);
+
+      document.getElementById("connectBtn").addEventListener("click", async () => {
+        try { await connectSerial(); } catch (e) { log(`ERROR: ${e.message}`); }
+      });
+      document.getElementById("disconnectBtn").addEventListener("click", async () => {
+        try { await disconnectSerial(); } catch (e) { log(`ERROR: ${e.message}`); }
+      });
+      document.getElementById("readBtn").addEventListener("click", async () => {
+        try { await readExisting(); } catch (e) { log(`ERROR: ${e.message}`); }
+      });
+      document.getElementById("writeBtn").addEventListener("click", async () => {
+        try { await writeChannel(); } catch (e) { log(`ERROR: ${e.message}`); }
+      });
+
+      updateToneUI();
+    }
+
+    init();
+  </script>
+</body>
+</html>
