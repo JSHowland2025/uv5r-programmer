@@ -357,12 +357,10 @@
 
     function encodeFlags(existingRaw) {
       const out = new Uint8Array(existingRaw);
-
       out[14] &= 0xFE;
       out[15] &= ~0x4F;
       out[15] |= 0x04;
       out[15] |= 0x40;
-
       return out;
     }
 
@@ -748,7 +746,6 @@
       const recAddr = mem * MEM_RECORD_SIZE;
       const nameAddr = NAME_TABLE_OFFSET + mem * NAME_RECORD_SIZE;
 
-      await identRadio();
       log("Writing memory block...");
       await writeBlock16(recAddr, newRaw);
       await sleep(150);
