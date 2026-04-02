@@ -32,13 +32,6 @@
       padding: 10px;
       margin-bottom: 16px;
     }
-    .info {
-      background: #eef5ff;
-      border: 1px solid #b8d0f2;
-      padding: 10px;
-      margin-bottom: 16px;
-      line-height: 1.45;
-    }
     .grid {
       display: grid;
       grid-template-columns: 240px 1fr;
@@ -61,7 +54,7 @@
     }
     #log {
       width: 100%;
-      height: 300px;
+      height: 260px;
       margin-top: 18px;
       font-family: monospace;
       white-space: pre-wrap;
@@ -69,8 +62,6 @@
     .small {
       font-size: 0.92rem;
       color: #666;
-      margin-top: 10px;
-      line-height: 1.4;
     }
     .hidden {
       display: none;
@@ -85,11 +76,6 @@
     .bad {
       color: #9e1c1c;
     }
-    .section-title {
-      margin-top: 18px;
-      margin-bottom: 10px;
-      font-weight: bold;
-    }
   </style>
 </head>
 <body>
@@ -102,17 +88,6 @@
     <div class="warn" id="browserWarning">
       This app requires a Chromium-based browser with Web Serial support, such as Chrome or Edge.
     </div>
-
-    <div class="info">
-      <strong>How to use:</strong><br>
-      1. Connect the programming cable.<br>
-      2. Click <strong>Connect</strong> and choose the serial port.<br>
-      3. Fill in the channel settings.<br>
-      4. Click <strong>Write Channel</strong>.<br>
-      5. Power-cycle the radio afterward if needed.
-    </div>
-
-    <div class="section-title">Channel Settings</div>
 
     <div class="grid">
       <label for="mem">Memory location</label>
@@ -189,11 +164,7 @@
     <textarea id="log" readonly></textarea>
 
     <div class="small">
-      Notes:<br>
-      - The radio may need to be power-cycled after writing.<br>
-      - Channel names are limited to 7 ASCII characters.<br>
-      - Duplex values are <strong>+</strong>, <strong>-</strong>, or <strong>0</strong>.<br>
-      - DTCS will display like <strong>D411N</strong>. CTCSS will display like <strong>127.3</strong>.
+      After writing, you may still need to power-cycle the radio to exit clone mode.
     </div>
   </div>
 
@@ -268,22 +239,6 @@
 
     function clearRxBuffer() {
       rxBuffer = new Uint8Array(0);
-    }
-
-    function formatTone(toneObj) {
-      if (!toneObj || !toneObj.mode) {
-        return "NONE";
-      }
-      if (toneObj.mode === "Tone") {
-        return Number(toneObj.value).toFixed(1);
-      }
-      if (toneObj.mode === "DTCS") {
-        return `D${toneObj.value}${toneObj.polarity}`;
-      }
-      if (toneObj.mode === "Unknown") {
-        return `Unknown(${toneObj.value})`;
-      }
-      return "NONE";
     }
 
     async function readExact(n, timeoutMs = 1500) {
@@ -749,8 +704,8 @@
       log(`Duplex: ${parsed.duplex || "0"}`);
       log(`Offset: ${parsed.offset.toFixed(5)} MHz`);
       log(`Tone mode: ${parsed.toneMode || "NONE"}`);
-      log(`RX tone: ${formatTone(parsed.rxTone)}`);
-      log(`TX tone: ${formatTone(parsed.txTone)}`);
+      log(`RX tone: ${JSON.stringify(parsed.rxTone)}`);
+      log(`TX tone: ${JSON.stringify(parsed.txTone)}`);
     }
 
     async function writeChannel() {
@@ -780,21 +735,10 @@
       log(`Duplex        : ${parsed.duplex || "0"}`);
       log(`Offset        : ${parsed.offset.toFixed(5)} MHz`);
       log(`Tone mode     : ${parsed.toneMode || "NONE"}`);
-      log(`RX tone       : ${formatTone(parsed.rxTone)}`);
-      log(`TX tone       : ${formatTone(parsed.txTone)}`);
+      log(`RX tone       : ${JSON.stringify(parsed.rxTone)}`);
+      log(`TX tone       : ${JSON.stringify(parsed.txTone)}`);
 
-      const confirmText =
-        `Write memory ${mem}?\n\n` +
-        `Name: ${sanitizeName(name)}\n` +
-        `RX: ${parsed.rxMHz.toFixed(5)} MHz\n` +
-        `TX: ${parsed.txMHz.toFixed(5)} MHz\n` +
-        `Duplex: ${parsed.duplex || "0"}\n` +
-        `Offset: ${parsed.offset.toFixed(5)} MHz\n` +
-        `Tone mode: ${parsed.toneMode || "NONE"}\n` +
-        `RX tone: ${formatTone(parsed.rxTone)}\n` +
-        `TX tone: ${formatTone(parsed.txTone)}`;
-
-      if (!confirm(confirmText)) {
+      if (!confirm(`Write memory ${mem}?`)) {
         log("Write cancelled.");
         return;
       }
